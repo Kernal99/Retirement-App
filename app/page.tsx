@@ -52,6 +52,20 @@ type AppState = {
   monthlySpendBefore67: number;
   monthlySpendAfter67: number;
   monthlySpendAfter77: number;
+
+  carExpenseAge: number;
+  carExpenseAmount: number;
+  remodelExpenseAge: number;
+  remodelExpenseAmount: number;
+  medicalExpenseAge: number;
+  medicalExpenseAmount: number;
+  familyHelpAge: number;
+  familyHelpAmount: number;
+  longTermCareEnabled: boolean;
+  longTermCareStartAge: number;
+  longTermCareYears: number;
+  longTermCareAnnualCost: number;
+
   expenseInflationEnabled: boolean;
   expenseInflationRate: number;
 
@@ -81,6 +95,7 @@ type AppState = {
   targetTopBracket: number;
 
   taxFilingStatus: FilingStatus;
+  stateTaxRegion: "wa" | "ca" | "id" | "az";
   federalDeduction: number;
   inflationRate: number;
 
@@ -98,6 +113,10 @@ type AppState = {
   monteCarloMeanReturn: number;
   monteCarloStdDev: number;
 
+  spouseDeathAge: number;
+  survivorSpendingPercent: number;
+  survivorKeepsHigherSS: boolean;
+
   withdrawalStrategy: WithdrawalStrategy;
 };
 
@@ -109,7 +128,10 @@ type Bracket = {
 type ResultRow = {
   age: number;
   annualSpend: number;
+  oneTimeExpense: number;
+  longTermCareExpense: number;
   federalTax: number;
+  stateTax: number;
   irmaa: number;
   taxableIncome: number;
   topRate: number;
@@ -208,6 +230,20 @@ const defaultState: AppState = {
   monthlySpendBefore67: 13000,
   monthlySpendAfter67: 9000,
   monthlySpendAfter77: 8000,
+
+  carExpenseAge: 68,
+  carExpenseAmount: 35000,
+  remodelExpenseAge: 72,
+  remodelExpenseAmount: 60000,
+  medicalExpenseAge: 78,
+  medicalExpenseAmount: 40000,
+  familyHelpAge: 70,
+  familyHelpAmount: 25000,
+  longTermCareEnabled: false,
+  longTermCareStartAge: 85,
+  longTermCareYears: 4,
+  longTermCareAnnualCost: 90000,
+
   expenseInflationEnabled: true,
   expenseInflationRate: 2.5,
 
@@ -237,6 +273,7 @@ const defaultState: AppState = {
   targetTopBracket: 0.22,
 
   taxFilingStatus: "mfj",
+  stateTaxRegion: "wa",
   federalDeduction: 30000,
   inflationRate: 2.5,
 
@@ -253,6 +290,10 @@ const defaultState: AppState = {
   monteCarloRuns: 250,
   monteCarloMeanReturn: 6,
   monteCarloStdDev: 10,
+
+  spouseDeathAge: 90,
+  survivorSpendingPercent: 75,
+  survivorKeepsHigherSS: true,
 
   withdrawalStrategy: "esop_first_roth_last",
 };
@@ -375,6 +416,28 @@ function calcIRMAA(age: number, filingStatus: FilingStatus, magi: number) {
   return monthlySurcharges[tier] * 12 * 2;
 }
 
+
+function calcStateTax(taxableIncome: number, region: AppState["stateTaxRegion"]) {
+  const income = Math.max(0, taxableIncome);
+
+  if (region === "wa") return 0;
+  if (region === "az") return income * 0.025;
+  if (region === "id") return income * 0.058;
+
+  // Simplified California single/MFJ-blended estimate for planning only.
+  // This is intentionally conservative and not a substitute for a full state return.
+  const brackets: Bracket[] = [
+    { limit: 20198, rate: 0.01 },
+    { limit: 47884, rate: 0.02 },
+    { limit: 75576, rate: 0.04 },
+    { limit: 104910, rate: 0.06 },
+    { limit: 132590, rate: 0.08 },
+    { limit: 677278, rate: 0.093 },
+    { limit: Number.POSITIVE_INFINITY, rate: 0.103 },
+  ];
+  return calcFederalTax(income, brackets).tax;
+}
+
 function randomNormal(mean: number, stdDev: number) {
   let u = 0;
   let v = 0;
@@ -403,6 +466,8 @@ function exportRowsToExcel(rows: ResultRow[]) {
   const exportData = rows.map((row) => ({
     Age: row.age,
     Spend: row.annualSpend,
+    OneTimeExpense: row.oneTimeExpense,
+    LongTermCareExpense: row.longTermCareExpense,
     SocialSecurity: row.totalSS,
     TaxableSocialSecurity: row.taxableSS,
     Pension: row.pension,
@@ -414,6 +479,7 @@ function exportRowsToExcel(rows: ResultRow[]) {
     TaxableESOPWithdrawal: row.taxableEsopWithdrawal,
     TaxableIncome: row.taxableIncome,
     FederalTax: row.federalTax,
+    StateTax: row.stateTax,
     IRMAA: row.irmaa,
     TopBracket: row.topRate,
     SpendGap: row.spendFundingNeed,
@@ -439,7 +505,7 @@ export default function RetirementPlannerApp() {
   const [scenarioName, setScenarioName] = useState("");
   const [savedScenarios, setSavedScenarios] = useState<string[]>([]);
   const [importMessage, setImportMessage] = useState("");
-  const [activeTab, setActiveTab] = useState<"inputs" | "projection" | "details">("inputs");
+  const [activeTab, setActiveTab] = useState<"summary" | "inputs" | "projection" | "details">("summary");
   const importRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -461,6 +527,14 @@ export default function RetirementPlannerApp() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   }, [state]);
 
+  useEffect(() => {
+    if ("serviceWorker" in navigator && process.env.NODE_ENV === "production") {
+      navigator.serviceWorker.register("/sw.js").catch(() => {
+        // Offline support is optional; ignore registration failures.
+      });
+    }
+  }, []);
+
   const update = <K extends keyof AppState>(key: K, value: AppState[K]) => {
     setState((prev) => ({ ...prev, [key]: value }));
   };
@@ -477,6 +551,18 @@ export default function RetirementPlannerApp() {
     monthlySpendBefore67,
     monthlySpendAfter67,
     monthlySpendAfter77,
+    carExpenseAge,
+    carExpenseAmount,
+    remodelExpenseAge,
+    remodelExpenseAmount,
+    medicalExpenseAge,
+    medicalExpenseAmount,
+    familyHelpAge,
+    familyHelpAmount,
+    longTermCareEnabled,
+    longTermCareStartAge,
+    longTermCareYears,
+    longTermCareAnnualCost,
     expenseInflationEnabled,
     expenseInflationRate,
     ssUserAge,
@@ -500,6 +586,7 @@ export default function RetirementPlannerApp() {
     autoRothMode,
     targetTopBracket,
     taxFilingStatus,
+    stateTaxRegion,
     federalDeduction,
     inflationRate,
     homePayoffAge,
@@ -513,6 +600,9 @@ export default function RetirementPlannerApp() {
     monteCarloRuns,
     monteCarloMeanReturn,
     monteCarloStdDev,
+    spouseDeathAge,
+    survivorSpendingPercent,
+    survivorKeepsHigherSS,
     withdrawalStrategy,
   } = state;
 
@@ -586,10 +676,12 @@ export default function RetirementPlannerApp() {
     );
 
     const taxResult = calcFederalTax(taxableIncome, getInflatedBrackets(params.yearOffset));
+    const stateTax = calcStateTax(taxableIncome, stateTaxRegion);
     const irmaa = calcIRMAA(params.age, taxFilingStatus, otherIncome + taxableSS);
 
     return {
       federalTax: taxResult.tax,
+      stateTax,
       topRate: taxResult.topRate,
       taxableIncome,
       taxableSS,
@@ -621,9 +713,27 @@ export default function RetirementPlannerApp() {
         spendInflationYears = Math.max(0, 67 - retireAge) + (77 - 67) + (age - 77);
       }
 
-      const annualSpend = expenseInflationEnabled
+      const baseAnnualSpend = expenseInflationEnabled
         ? spendBase * Math.pow(1 + expenseInflationRate / 100, spendInflationYears)
         : spendBase;
+
+      const oneTimeExpense =
+        (age === carExpenseAge ? carExpenseAmount : 0) +
+        (age === remodelExpenseAge ? remodelExpenseAmount : 0) +
+        (age === medicalExpenseAge ? medicalExpenseAmount : 0) +
+        (age === familyHelpAge ? familyHelpAmount : 0);
+
+      const longTermCareExpense =
+        longTermCareEnabled &&
+        age >= longTermCareStartAge &&
+        age < longTermCareStartAge + longTermCareYears
+          ? longTermCareAnnualCost * Math.pow(1 + expenseInflationRate / 100, age - longTermCareStartAge)
+          : 0;
+
+      const survivorAdjustment =
+        spouseDeathAge > 0 && age >= spouseDeathAge ? survivorSpendingPercent / 100 : 1;
+
+      const annualSpend = baseAnnualSpend * survivorAdjustment + oneTimeExpense + longTermCareExpense;
 
       const userSSInflationYears = age >= ssUserAge ? age - ssUserAge : 0;
       const spouseSSInflationYears = age >= ssSpouseAge ? age - ssSpouseAge : 0;
@@ -642,7 +752,12 @@ export default function RetirementPlannerApp() {
             (ssInflationEnabled ? Math.pow(1 + ssInflationRate / 100, spouseSSInflationYears) : 1)
           : 0;
 
-      const totalSS = userSS + spouseSS;
+      const totalSS =
+        spouseDeathAge > 0 && age >= spouseDeathAge
+          ? survivorKeepsHigherSS
+            ? Math.max(userSS, spouseSS)
+            : userSS
+          : userSS + spouseSS;
       const pension = age >= pensionAge ? pensionMonthly * 12 : 0;
       const rental = rentalMonthly * 12;
       const insuranceIncome =
@@ -688,6 +803,7 @@ export default function RetirementPlannerApp() {
       );
 
       let federalTax = 0;
+      let stateTax = 0;
       let irmaa = 0;
       let taxableIncome = 0;
       let topRate = 0;
@@ -701,7 +817,7 @@ export default function RetirementPlannerApp() {
       // Portfolio used = RMD + extra tax-deferred withdrawal.
       // Taxable portfolio = Portfolio used.
       for (let pass = 0; pass < 15; pass += 1) {
-        let remainingCashNeed = spendFundingNeed + federalTax + irmaa;
+        let remainingCashNeed = spendFundingNeed + federalTax + stateTax + irmaa;
 
         const rmdCashUsed = Math.min(rmd, remainingCashNeed);
         remainingCashNeed -= rmdCashUsed;
@@ -781,9 +897,11 @@ export default function RetirementPlannerApp() {
 
         const stable =
           Math.abs(taxCalc.federalTax - federalTax) < 1 &&
+          Math.abs(taxCalc.stateTax - stateTax) < 1 &&
           Math.abs(taxCalc.irmaa - irmaa) < 1;
 
         federalTax = taxCalc.federalTax;
+        stateTax = taxCalc.stateTax;
         irmaa = taxCalc.irmaa;
         taxableIncome = taxCalc.taxableIncome;
         taxableSS = taxCalc.taxableSS;
@@ -817,6 +935,7 @@ export default function RetirementPlannerApp() {
       });
 
       federalTax = finalTaxCalc.federalTax;
+      stateTax = finalTaxCalc.stateTax;
       irmaa = finalTaxCalc.irmaa;
       taxableIncome = finalTaxCalc.taxableIncome;
       taxableSS = finalTaxCalc.taxableSS;
@@ -845,7 +964,10 @@ export default function RetirementPlannerApp() {
       rows.push({
         age,
         annualSpend,
+        oneTimeExpense,
+        longTermCareExpense,
         federalTax,
+        stateTax,
         irmaa,
         taxableIncome,
         topRate,
@@ -974,6 +1096,22 @@ export default function RetirementPlannerApp() {
   const esopTaxableTotalFederalTax = esopTaxableResults.reduce((sum, row) => sum + row.federalTax, 0);
   const esopTaxFreeTotalFederalTax = esopTaxFreeResults.reduce((sum, row) => sum + row.federalTax, 0);
 
+  const lifetimeFederalTax = results.reduce((sum, row) => sum + row.federalTax, 0);
+  const lifetimeStateTax = results.reduce((sum, row) => sum + row.stateTax, 0);
+  const lifetimeIRMAA = results.reduce((sum, row) => sum + row.irmaa, 0);
+  const taxSpikeRow = results.reduce<ResultRow | null>((max, row) => (!max || row.federalTax + row.stateTax + row.irmaa > max.federalTax + max.stateTax + max.irmaa ? row : max), null);
+  const irmaaTriggeredAge = results.find((row) => row.irmaa > 0)?.age ?? null;
+  const rmdStartAge = results.find((row) => row.rmd > 0)?.age ?? null;
+  const rothUsedEarlyAge = results.find((row) => row.age < 73 && row.rothCashWithdrawal > 0)?.age ?? null;
+  const safeSpendingEstimate = combinedDepletedAge
+    ? Math.max(0, monthlySpendAfter67 * 0.9)
+    : monthlySpendAfter67;
+  const recommendedRothConversion =
+    irmaaTriggeredAge && irmaaTriggeredAge <= 65
+      ? "Reduce conversions to avoid early IRMAA."
+      : combinedDepletedAge
+        ? "Reduce conversions and preserve taxable portfolio."
+        : "Current conversion plan looks acceptable; compare 12% vs 22% bracket fills.";
   const healthLabel = combinedDepletedAge
     ? `Portfolio + Roth run out at age ${combinedDepletedAge}`
     : minPortfolio > projectedPortfolioAtRetirement * 0.75
@@ -1098,7 +1236,7 @@ export default function RetirementPlannerApp() {
       : null;
 
   return (
-    <div className="min-h-screen bg-slate-50 p-6">
+    <div className="min-h-screen bg-slate-50 p-3 pb-24 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="space-y-2">
           <h1 className="text-4xl font-semibold tracking-tight">Retirement plan tracker</h1>
@@ -1120,7 +1258,7 @@ export default function RetirementPlannerApp() {
             <button
               type="button"
               onClick={saveScenario}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
+              className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium shadow-sm hover:bg-slate-50"
             >
               <Save className="h-4 w-4" />
               Save scenario
@@ -1149,7 +1287,7 @@ export default function RetirementPlannerApp() {
               <button
                 type="button"
                 onClick={exportPlanJson}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium shadow-sm hover:bg-slate-50"
               >
                 <Download className="h-4 w-4" />
                 Export plan
@@ -1158,7 +1296,7 @@ export default function RetirementPlannerApp() {
               <button
                 type="button"
                 onClick={() => importRef.current?.click()}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
+                className="inline-flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium shadow-sm hover:bg-slate-50"
               >
                 <Upload className="h-4 w-4" />
                 Import plan
@@ -1221,29 +1359,119 @@ export default function RetirementPlannerApp() {
         </Card>
 
         <div className="space-y-4">
-          <div className="grid w-full grid-cols-3 rounded-2xl bg-white p-1 shadow-sm">
+          <div className="hidden w-full grid-cols-4 rounded-2xl bg-white p-1 shadow-sm md:grid">
+            <button
+              type="button"
+              onClick={() => setActiveTab("summary")}
+              className={`rounded-xl px-4 py-3 text-sm font-medium ${activeTab === "summary" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Summary
+            </button>
             <button
               type="button"
               onClick={() => setActiveTab("inputs")}
-              className={`rounded-xl px-4 py-2 text-sm font-medium ${activeTab === "inputs" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+              className={`rounded-xl px-4 py-3 text-sm font-medium ${activeTab === "inputs" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
             >
               Inputs
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("projection")}
-              className={`rounded-xl px-4 py-2 text-sm font-medium ${activeTab === "projection" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+              className={`rounded-xl px-4 py-3 text-sm font-medium ${activeTab === "projection" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
             >
               Projection
             </button>
             <button
               type="button"
               onClick={() => setActiveTab("details")}
-              className={`rounded-xl px-4 py-2 text-sm font-medium ${activeTab === "details" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+              className={`rounded-xl px-4 py-3 text-sm font-medium ${activeTab === "details" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
             >
               Year-by-year
             </button>
           </div>
+
+          {activeTab === "summary" && (
+          <div className="space-y-4">
+            <Card className="rounded-2xl shadow-sm">
+              <CardHeader>
+                <CardTitle>Planner Summary</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <div className="rounded-xl border p-4">
+                  <p className="text-sm text-slate-500">Safe spending estimate</p>
+                  <p className="mt-1 text-2xl font-semibold">{fmtCurrency(safeSpendingEstimate)}/mo</p>
+                </div>
+                <div className="rounded-xl border p-4">
+                  <p className="text-sm text-slate-500">Recommended Roth conversion</p>
+                  <p className="mt-1 text-sm font-medium">{recommendedRothConversion}</p>
+                </div>
+                <div className="rounded-xl border p-4">
+                  <p className="text-sm text-slate-500">Depletion age</p>
+                  <p className="mt-1 text-2xl font-semibold">{combinedDepletedAge ?? "Not depleted"}</p>
+                </div>
+                <div className="rounded-xl border p-4">
+                  <p className="text-sm text-slate-500">Lifetime federal tax</p>
+                  <p className="mt-1 text-2xl font-semibold">{fmtCurrency(lifetimeFederalTax)}</p>
+                  <p className="mt-1 text-xs text-slate-500">State tax: {fmtCurrency(lifetimeStateTax)} | IRMAA: {fmtCurrency(lifetimeIRMAA)}</p>
+                </div>
+                <div className="rounded-xl border p-4">
+                  <p className="text-sm text-slate-500">After-tax estate value</p>
+                  <p className="mt-1 text-2xl font-semibold">{fmtCurrency(estimatedAfterTaxNetWorth)}</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-2xl shadow-sm">
+              <CardHeader>
+                <CardTitle>Warning badges</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-wrap gap-2">
+                {portfolioDepletedAge ? <span className="rounded-full bg-red-100 px-3 py-2 text-sm font-medium text-red-800">Portfolio depleted at {portfolioDepletedAge}</span> : <span className="rounded-full bg-emerald-100 px-3 py-2 text-sm font-medium text-emerald-800">Portfolio not depleted</span>}
+                {irmaaTriggeredAge ? <span className="rounded-full bg-amber-100 px-3 py-2 text-sm font-medium text-amber-800">IRMAA triggered at {irmaaTriggeredAge}</span> : <span className="rounded-full bg-emerald-100 px-3 py-2 text-sm font-medium text-emerald-800">No IRMAA triggered</span>}
+                {rothUsedEarlyAge ? <span className="rounded-full bg-orange-100 px-3 py-2 text-sm font-medium text-orange-800">Roth used early at {rothUsedEarlyAge}</span> : <span className="rounded-full bg-emerald-100 px-3 py-2 text-sm font-medium text-emerald-800">Roth preserved early</span>}
+                {rmdStartAge ? <span className="rounded-full bg-blue-100 px-3 py-2 text-sm font-medium text-blue-800">RMD starts at {rmdStartAge}</span> : <span className="rounded-full bg-slate-100 px-3 py-2 text-sm font-medium text-slate-700">No RMD projected</span>}
+                {taxSpikeRow ? <span className="rounded-full bg-purple-100 px-3 py-2 text-sm font-medium text-purple-800">Tax spike at {taxSpikeRow.age}: {fmtCurrency(taxSpikeRow.federalTax + taxSpikeRow.stateTax + taxSpikeRow.irmaa)}</span> : null}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-2xl shadow-sm">
+              <CardHeader>
+                <CardTitle>Saved scenario compare</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 md:grid-cols-3 text-sm">
+                {[
+                  { label: "Conservative", row: scenarioSummaries.find((s) => s.name === "Worst case") },
+                  { label: "Base", row: scenarioSummaries.find((s) => s.name === "Base case") },
+                  { label: "Aggressive", row: scenarioSummaries.find((s) => s.name === "Best case") },
+                ].map((item) => (
+                  <div key={item.label} className="rounded-xl border p-4">
+                    <div className="font-medium">{item.label}</div>
+                    <div>Ending net worth: {fmtCurrency(item.row?.endingNetWorth ?? 0)}</div>
+                    <div>Ending portfolio: {fmtCurrency(item.row?.endingPortfolio ?? 0)}</div>
+                    <div>Depletion age: {item.row?.depletionAge ?? "Not depleted"}</div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+
+            <div className="flex flex-wrap gap-3 print:hidden">
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className="rounded-xl bg-slate-900 px-5 py-3 text-sm font-medium text-white shadow-sm"
+              >
+                Print / Save PDF report
+              </button>
+              <button
+                type="button"
+                onClick={() => exportRowsToExcel(results)}
+                className="rounded-xl border px-5 py-3 text-sm font-medium shadow-sm"
+              >
+                Download Excel
+              </button>
+            </div>
+          </div>
+          )}
 
           {activeTab === "inputs" && (
           <div className="space-y-4">
@@ -1301,6 +1529,22 @@ export default function RetirementPlannerApp() {
 
               <Card className="rounded-2xl shadow-sm">
                 <CardHeader>
+                  <CardTitle>One-time expenses</CardTitle>
+                </CardHeader>
+                <CardContent className="grid gap-4">
+                  <NumberField label="Car age" value={carExpenseAge} onChange={(v) => update("carExpenseAge", v)} step={1} />
+                  <NumberField label="Car amount" value={carExpenseAmount} onChange={(v) => update("carExpenseAmount", v)} />
+                  <NumberField label="Remodel age" value={remodelExpenseAge} onChange={(v) => update("remodelExpenseAge", v)} step={1} />
+                  <NumberField label="Remodel amount" value={remodelExpenseAmount} onChange={(v) => update("remodelExpenseAmount", v)} />
+                  <NumberField label="Medical event age" value={medicalExpenseAge} onChange={(v) => update("medicalExpenseAge", v)} step={1} />
+                  <NumberField label="Medical event amount" value={medicalExpenseAmount} onChange={(v) => update("medicalExpenseAmount", v)} />
+                  <NumberField label="Family help age" value={familyHelpAge} onChange={(v) => update("familyHelpAge", v)} step={1} />
+                  <NumberField label="Family help amount" value={familyHelpAmount} onChange={(v) => update("familyHelpAmount", v)} />
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-2xl shadow-sm">
+                <CardHeader>
                   <CardTitle>Federal tax settings</CardTitle>
                 </CardHeader>
                 <CardContent className="grid gap-4">
@@ -1309,6 +1553,15 @@ export default function RetirementPlannerApp() {
                     <select className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={taxFilingStatus} onChange={(e) => update("taxFilingStatus", e.target.value as FilingStatus)}>
                       <option value="mfj">Married filing jointly</option>
                       <option value="single">Single</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>State tax location</Label>
+                    <select className="w-full rounded-md border bg-background px-3 py-3 text-sm" value={stateTaxRegion} onChange={(e) => update("stateTaxRegion", e.target.value as AppState["stateTaxRegion"])}>
+                      <option value="wa">Washington - none</option>
+                      <option value="ca">California - estimate</option>
+                      <option value="id">Idaho - estimate</option>
+                      <option value="az">Arizona - estimate</option>
                     </select>
                   </div>
                   <NumberField label="Standard deduction" value={federalDeduction} onChange={(v) => update("federalDeduction", v)} step={100} />
@@ -1406,6 +1659,25 @@ export default function RetirementPlannerApp() {
                       <p className="text-sm text-slate-500">Turn on if ESOP withdrawals are taxed like ordinary income.</p>
                     </div>
                     <Switch checked={esopTaxable} onCheckedChange={(v) => update("esopTaxable", v)} />
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border p-3">
+                    <div>
+                      <Label>Long-term care scenario</Label>
+                      <p className="text-sm text-slate-500">Adds a future annual care cost.</p>
+                    </div>
+                    <Switch checked={longTermCareEnabled} onCheckedChange={(v) => update("longTermCareEnabled", v)} />
+                  </div>
+                  <NumberField label="LTC start age" value={longTermCareStartAge} onChange={(v) => update("longTermCareStartAge", v)} step={1} />
+                  <NumberField label="LTC years" value={longTermCareYears} onChange={(v) => update("longTermCareYears", v)} step={1} />
+                  <NumberField label="LTC annual cost" value={longTermCareAnnualCost} onChange={(v) => update("longTermCareAnnualCost", v)} />
+                  <NumberField label="Spouse-survivor start age" value={spouseDeathAge} onChange={(v) => update("spouseDeathAge", v)} step={1} />
+                  <NumberField label="Survivor spending %" value={survivorSpendingPercent} onChange={(v) => update("survivorSpendingPercent", v)} step={1} />
+                  <div className="flex items-center justify-between rounded-2xl border p-3">
+                    <div>
+                      <Label>Survivor keeps higher SS</Label>
+                      <p className="text-sm text-slate-500">Use higher of two Social Security benefits.</p>
+                    </div>
+                    <Switch checked={survivorKeepsHigherSS} onCheckedChange={(v) => update("survivorKeepsHigherSS", v)} />
                   </div>
                 </CardContent>
               </Card>
@@ -1688,7 +1960,7 @@ export default function RetirementPlannerApp() {
                 <button
                   type="button"
                   onClick={() => exportRowsToExcel(results)}
-                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-2 text-sm font-medium shadow-sm hover:bg-slate-50"
+                  className="inline-flex items-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium shadow-sm hover:bg-slate-50"
                 >
                   <Download className="h-4 w-4" />
                   Download to Excel
@@ -1697,20 +1969,22 @@ export default function RetirementPlannerApp() {
 
               <CardContent className="w-full overflow-x-auto">
                 <Table className="w-full min-w-[2250px] text-sm">
-                  <TableHeader>
+                  <TableHeader className="sticky top-0 z-40 bg-white">
                     <TableRow>
                       <TableHead className="sticky left-0 z-30 bg-white border-r" rowSpan={2}>
                         Age
                       </TableHead>
-                      <TableHead colSpan={2} className="text-center">Spending</TableHead>
+                      <TableHead colSpan={4} className="text-center">Spending</TableHead>
                       <TableHead colSpan={5} className="text-center">Income</TableHead>
-                      <TableHead colSpan={6} className="text-center">Taxes</TableHead>
+                      <TableHead colSpan={7} className="text-center">Taxes</TableHead>
                       <TableHead colSpan={7} className="text-center">Withdrawals</TableHead>
                       <TableHead colSpan={4} className="text-center">Ending Balances</TableHead>
                     </TableRow>
                     <TableRow>
-                      <TableHead>Spend</TableHead>
-                      <TableHead>Spend gap</TableHead>
+                      <TableHead className="sticky top-0 z-40 bg-white">Spend</TableHead>
+                      <TableHead className="sticky top-0 z-40 bg-white">Spend gap</TableHead>
+                      <TableHead className="sticky top-0 z-40 bg-white">One-time</TableHead>
+                      <TableHead className="sticky top-0 z-40 bg-white">LTC</TableHead>
 
                       <TableHead>Social Security</TableHead>
                       <TableHead>Taxable SS</TableHead>
@@ -1719,8 +1993,9 @@ export default function RetirementPlannerApp() {
                       <TableHead>Insurance</TableHead>
 
                       <TableHead>Taxable income</TableHead>
-                      <TableHead>Federal tax</TableHead>
-                      <TableHead>IRMAA</TableHead>
+                      <TableHead className="sticky top-0 z-40 bg-white">Federal tax</TableHead>
+                      <TableHead className="sticky top-0 z-40 bg-white">State tax</TableHead>
+                      <TableHead className="sticky top-0 z-40 bg-white">IRMAA</TableHead>
                       <TableHead>Top bracket</TableHead>
                       <TableHead>Taxable portfolio</TableHead>
                       <TableHead>Taxable ESOP</TableHead>
@@ -1746,6 +2021,8 @@ export default function RetirementPlannerApp() {
                         <TableCell className="sticky left-0 z-20 bg-white border-r font-medium">{row.age}</TableCell>
                         <TableCell>{fmtCurrency(row.annualSpend)}</TableCell>
                         <TableCell>{fmtCurrency(row.spendFundingNeed)}</TableCell>
+                        <TableCell>{fmtCurrency(row.oneTimeExpense)}</TableCell>
+                        <TableCell>{fmtCurrency(row.longTermCareExpense)}</TableCell>
 
                         <TableCell>{fmtCurrency(row.totalSS)}</TableCell>
                         <TableCell>{fmtCurrency(row.taxableSS)}</TableCell>
@@ -1755,6 +2032,7 @@ export default function RetirementPlannerApp() {
 
                         <TableCell>{fmtCurrency(row.taxableIncome)}</TableCell>
                         <TableCell>{fmtCurrency(row.federalTax)}</TableCell>
+                        <TableCell>{fmtCurrency(row.stateTax)}</TableCell>
                         <TableCell>{fmtCurrency(row.irmaa)}</TableCell>
                         <TableCell>{fmtPercent(row.topRate * 100)}</TableCell>
                         <TableCell>{fmtCurrency(row.taxablePortfolioWithdrawal)}</TableCell>
@@ -1780,6 +2058,25 @@ export default function RetirementPlannerApp() {
             </Card>
           </div>
           )}
+        </div>
+
+
+        <div className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-4 gap-1 border-t bg-white/95 p-2 shadow-lg backdrop-blur md:hidden">
+          {[
+            ["summary", "Summary"],
+            ["inputs", "Inputs"],
+            ["projection", "Projection"],
+            ["details", "Years"],
+          ].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setActiveTab(value as "summary" | "inputs" | "projection" | "details")}
+              className={`rounded-xl px-2 py-3 text-xs font-medium ${activeTab === value ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700"}`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
     </div>
