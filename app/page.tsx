@@ -2139,7 +2139,6 @@ export default function RetirementPlannerApp() {
           ))}
         </div>
       </div>
-      </div>
     </div>
   );
 }
