@@ -6,7 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import {
   AlertTriangle,
@@ -507,6 +506,7 @@ export default function RetirementPlannerApp() {
   const [importMessage, setImportMessage] = useState("");
   const [activeTab, setActiveTab] = useState<"summary" | "inputs" | "projection" | "details">("summary");
   const importRef = useRef<HTMLInputElement | null>(null);
+  const yearHeaderRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     try {
@@ -1238,6 +1238,82 @@ export default function RetirementPlannerApp() {
   return (
     <div className="min-h-screen bg-slate-50 p-3 pb-24 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
+        <style jsx global>{`
+
+          .year-grid-shell {
+            border: 1px solid rgb(226 232 240);
+            border-radius: 0.75rem;
+            overflow: hidden;
+            background: white;
+          }
+
+          .year-grid-header-scroll {
+            width: 100%;
+            overflow: hidden;
+            background: rgb(248 250 252);
+            border-bottom: 1px solid rgb(226 232 240);
+          }
+
+          .year-grid-body-scroll {
+            height: 68vh;
+            width: 100%;
+            overflow: auto;
+            -webkit-overflow-scrolling: touch;
+          }
+
+          .year-grid {
+            width: max-content;
+            min-width: 100%;
+          }
+
+          .year-grid-row {
+            display: grid;
+            grid-template-columns: 76px repeat(27, minmax(132px, 1fr));
+          }
+
+          .year-grid-cell {
+            min-height: 42px;
+            border-right: 1px solid rgb(226 232 240);
+            border-bottom: 1px solid rgb(226 232 240);
+            padding: 0.65rem 0.75rem;
+            white-space: nowrap;
+            font-size: 0.875rem;
+            background: white;
+          }
+
+          .year-grid-header {
+            font-weight: 700;
+            color: rgb(51 65 85);
+            background: rgb(248 250 252);
+            border-bottom: 0;
+          }
+
+          .year-grid-age {
+            position: sticky;
+            left: 0;
+            z-index: 20;
+            font-weight: 700;
+            background: white;
+            box-shadow: 2px 0 4px rgb(15 23 42 / 0.08);
+          }
+
+          .year-grid-header.year-grid-age {
+            z-index: 30;
+            background: rgb(248 250 252);
+          }
+
+          @media print {
+            .year-grid-body-scroll {
+              height: auto;
+              overflow: visible;
+            }
+
+            .year-grid-header-scroll {
+              overflow: visible;
+            }
+          }
+        `}</style>
+
         <div className="space-y-2">
           <h1 className="text-4xl font-semibold tracking-tight">Retirement plan tracker</h1>
           <p className="max-w-3xl text-slate-600">
@@ -1967,100 +2043,119 @@ export default function RetirementPlannerApp() {
                 </button>
               </CardHeader>
 
-              <CardContent className="w-full overflow-x-auto">
-                <Table className="w-full min-w-[2250px] text-sm">
-                  <TableHeader className="sticky top-0 z-40 bg-white">
-                    <TableRow>
-                      <TableHead className="sticky left-0 z-30 bg-white border-r" rowSpan={2}>
-                        Age
-                      </TableHead>
-                      <TableHead colSpan={4} className="text-center">Spending</TableHead>
-                      <TableHead colSpan={5} className="text-center">Income</TableHead>
-                      <TableHead colSpan={7} className="text-center">Taxes</TableHead>
-                      <TableHead colSpan={7} className="text-center">Withdrawals</TableHead>
-                      <TableHead colSpan={4} className="text-center">Ending Balances</TableHead>
-                    </TableRow>
-                    <TableRow>
-                      <TableHead className="sticky top-0 z-40 bg-white">Spend</TableHead>
-                      <TableHead className="sticky top-0 z-40 bg-white">Spend gap</TableHead>
-                      <TableHead className="sticky top-0 z-40 bg-white">One-time</TableHead>
-                      <TableHead className="sticky top-0 z-40 bg-white">LTC</TableHead>
+              <CardContent>
+                {(() => {
+                  const headers = [
+                    "Age",
+                    "Spend",
+                    "Spend gap",
+                    "One-time",
+                    "LTC",
+                    "Social Security",
+                    "Taxable SS",
+                    "Pension",
+                    "Rental",
+                    "Insurance",
+                    "Taxable income",
+                    "Federal tax",
+                    "State tax",
+                    "IRMAA",
+                    "Top bracket",
+                    "Taxable portfolio",
+                    "Taxable ESOP",
+                    "Roth conv.",
+                    "RMD",
+                    "Total distribution",
+                    "ESOP used",
+                    "Portfolio used",
+                    "Roth used",
+                    "Portfolio to Roth",
+                    "End portfolio",
+                    "End Roth",
+                    "End ESOP",
+                    "Net worth",
+                  ];
 
-                      <TableHead>Social Security</TableHead>
-                      <TableHead>Taxable SS</TableHead>
-                      <TableHead>Pension</TableHead>
-                      <TableHead>Rental</TableHead>
-                      <TableHead>Insurance</TableHead>
+                  return (
+                    <div className="year-grid-shell">
+                      <div ref={yearHeaderRef} className="year-grid-header-scroll">
+                        <div className="year-grid">
+                          <div className="year-grid-row">
+                            {headers.map((label, index) => (
+                              <div
+                                key={label}
+                                className={`year-grid-cell year-grid-header ${index === 0 ? "year-grid-age" : ""}`}
+                              >
+                                {label}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
 
-                      <TableHead>Taxable income</TableHead>
-                      <TableHead className="sticky top-0 z-40 bg-white">Federal tax</TableHead>
-                      <TableHead className="sticky top-0 z-40 bg-white">State tax</TableHead>
-                      <TableHead className="sticky top-0 z-40 bg-white">IRMAA</TableHead>
-                      <TableHead>Top bracket</TableHead>
-                      <TableHead>Taxable portfolio</TableHead>
-                      <TableHead>Taxable ESOP</TableHead>
+                      <div
+                        className="year-grid-body-scroll"
+                        onScroll={(e) => {
+                          if (yearHeaderRef.current) {
+                            yearHeaderRef.current.scrollLeft = e.currentTarget.scrollLeft;
+                          }
+                        }}
+                      >
+                        <div className="year-grid">
+                          {results.map((row) => {
+                            const cells = [
+                              row.age,
+                              fmtCurrency(row.annualSpend),
+                              fmtCurrency(row.spendFundingNeed),
+                              fmtCurrency(row.oneTimeExpense),
+                              fmtCurrency(row.longTermCareExpense),
+                              fmtCurrency(row.totalSS),
+                              fmtCurrency(row.taxableSS),
+                              fmtCurrency(row.pension),
+                              fmtCurrency(row.rental),
+                              fmtCurrency(row.insuranceIncome),
+                              fmtCurrency(row.taxableIncome),
+                              fmtCurrency(row.federalTax),
+                              fmtCurrency(row.stateTax),
+                              fmtCurrency(row.irmaa),
+                              fmtPercent(row.topRate * 100),
+                              fmtCurrency(row.taxablePortfolioWithdrawal),
+                              fmtCurrency(row.taxableEsopWithdrawal),
+                              fmtCurrency(row.rothConversion),
+                              fmtCurrency(row.rmd),
+                              fmtCurrency(row.totalPortfolioDistribution),
+                              fmtCurrency(row.esopWithdrawal),
+                              fmtCurrency(row.portfolioWithdrawal),
+                              fmtCurrency(row.rothCashWithdrawal),
+                              fmtCurrency(row.conversionFromPortfolio),
+                              fmtCurrency(row.endPortfolio),
+                              fmtCurrency(row.endRoth),
+                              fmtCurrency(row.endEsop),
+                              fmtCurrency(row.netWorth),
+                            ];
 
-                      <TableHead>Roth conv.</TableHead>
-                      <TableHead>RMD</TableHead>
-                      <TableHead>Total distribution</TableHead>
-                      <TableHead>ESOP used</TableHead>
-                      <TableHead>Portfolio used</TableHead>
-                      <TableHead>Roth used</TableHead>
-                      <TableHead>Portfolio to Roth</TableHead>
-
-                      <TableHead>End portfolio</TableHead>
-                      <TableHead>End Roth</TableHead>
-                      <TableHead>End ESOP</TableHead>
-                      <TableHead>Net worth</TableHead>
-                    </TableRow>
-                  </TableHeader>
-
-                  <TableBody>
-                    {results.map((row) => (
-                      <TableRow key={row.age}>
-                        <TableCell className="sticky left-0 z-20 bg-white border-r font-medium">{row.age}</TableCell>
-                        <TableCell>{fmtCurrency(row.annualSpend)}</TableCell>
-                        <TableCell>{fmtCurrency(row.spendFundingNeed)}</TableCell>
-                        <TableCell>{fmtCurrency(row.oneTimeExpense)}</TableCell>
-                        <TableCell>{fmtCurrency(row.longTermCareExpense)}</TableCell>
-
-                        <TableCell>{fmtCurrency(row.totalSS)}</TableCell>
-                        <TableCell>{fmtCurrency(row.taxableSS)}</TableCell>
-                        <TableCell>{fmtCurrency(row.pension)}</TableCell>
-                        <TableCell>{fmtCurrency(row.rental)}</TableCell>
-                        <TableCell>{fmtCurrency(row.insuranceIncome)}</TableCell>
-
-                        <TableCell>{fmtCurrency(row.taxableIncome)}</TableCell>
-                        <TableCell>{fmtCurrency(row.federalTax)}</TableCell>
-                        <TableCell>{fmtCurrency(row.stateTax)}</TableCell>
-                        <TableCell>{fmtCurrency(row.irmaa)}</TableCell>
-                        <TableCell>{fmtPercent(row.topRate * 100)}</TableCell>
-                        <TableCell>{fmtCurrency(row.taxablePortfolioWithdrawal)}</TableCell>
-                        <TableCell>{fmtCurrency(row.taxableEsopWithdrawal)}</TableCell>
-
-                        <TableCell>{fmtCurrency(row.rothConversion)}</TableCell>
-                        <TableCell>{fmtCurrency(row.rmd)}</TableCell>
-                        <TableCell>{fmtCurrency(row.totalPortfolioDistribution)}</TableCell>
-                        <TableCell>{fmtCurrency(row.esopWithdrawal)}</TableCell>
-                        <TableCell>{fmtCurrency(row.portfolioWithdrawal)}</TableCell>
-                        <TableCell>{fmtCurrency(row.rothCashWithdrawal)}</TableCell>
-                        <TableCell>{fmtCurrency(row.conversionFromPortfolio)}</TableCell>
-
-                        <TableCell>{fmtCurrency(row.endPortfolio)}</TableCell>
-                        <TableCell>{fmtCurrency(row.endRoth)}</TableCell>
-                        <TableCell>{fmtCurrency(row.endEsop)}</TableCell>
-                        <TableCell>{fmtCurrency(row.netWorth)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
+                            return (
+                              <div className="year-grid-row" key={row.age}>
+                                {cells.map((cell, index) => (
+                                  <div
+                                    key={`${row.age}-${index}`}
+                                    className={`year-grid-cell ${index === 0 ? "year-grid-age" : ""}`}
+                                  >
+                                    {cell}
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
               </CardContent>
             </Card>
           </div>
           )}
-        </div>
-
-
         <div className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-4 gap-1 border-t bg-white/95 p-2 shadow-lg backdrop-blur md:hidden">
           {[
             ["summary", "Summary"],
