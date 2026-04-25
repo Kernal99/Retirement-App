@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Switch } from "@/components/ui/switch";
 import {
   AlertTriangle,
@@ -285,22 +284,38 @@ function NumberField({ label, value, onChange, step = 1000, min = 0 }: NumberFie
   );
 }
 
-function SummaryCard({ title, value, subtitle, icon: Icon }: SummaryCardProps) {
+function SummaryCard({
+  title,
+  value,
+  subtitle,
+  icon: Icon,
+  onClick,
+}: SummaryCardProps & { onClick?: () => void }) {
   return (
-    <Card className="rounded-2xl shadow-sm">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-sm text-slate-500">{title}</p>
-            <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
-            {subtitle ? <p className="mt-1 text-sm text-slate-500">{subtitle}</p> : null}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={onClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onClick?.();
+      }}
+      className="w-full cursor-pointer rounded-2xl text-left transition hover:-translate-y-0.5 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-slate-400 focus:ring-offset-2"
+    >
+      <Card className="h-full rounded-2xl shadow-sm">
+        <CardContent className="p-5">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm text-slate-500">{title}</p>
+              <p className="mt-1 text-2xl font-semibold tracking-tight">{value}</p>
+              {subtitle ? <p className="mt-1 text-sm text-slate-500">{subtitle}</p> : null}
+            </div>
+            <div className="rounded-2xl bg-slate-100 p-3">
+              <Icon className="h-5 w-5" />
+            </div>
           </div>
-          <div className="rounded-2xl bg-slate-100 p-3">
-            <Icon className="h-5 w-5" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 
@@ -424,6 +439,7 @@ export default function RetirementPlannerApp() {
   const [scenarioName, setScenarioName] = useState("");
   const [savedScenarios, setSavedScenarios] = useState<string[]>([]);
   const [importMessage, setImportMessage] = useState("");
+  const [activeTab, setActiveTab] = useState<"inputs" | "projection" | "details">("inputs");
   const importRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -1159,11 +1175,41 @@ export default function RetirementPlannerApp() {
         </Card>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-          <SummaryCard title="Portfolio at retirement" value={fmtCurrency(projectedPortfolioAtRetirement)} subtitle={`At age ${retireAge}`} icon={PiggyBank} />
-          <SummaryCard title="First-year distribution" value={firstYear ? fmtCurrency(firstYear.totalPortfolioDistribution) : "$0"} subtitle="Cash withdrawals + Roth + RMD" icon={DollarSign} />
-          <SummaryCard title="Portfolio at 67" value={age67Row ? fmtCurrency(age67Row.endPortfolio) : "—"} subtitle="Tax-deferred balance after early years" icon={TrendingUp} />
-          <SummaryCard title="Roth at 67" value={age67Row ? fmtCurrency(age67Row.endRoth) : "—"} subtitle="Roth balance after early years" icon={PiggyBank} />
-          <SummaryCard title="Plan status" value={healthLabel} subtitle={finalYear ? `Ending net worth ${fmtCurrency(finalYear.netWorth)}` : ""} icon={Home} />
+          <SummaryCard
+            title="Portfolio at retirement"
+            value={fmtCurrency(projectedPortfolioAtRetirement)}
+            subtitle={`At age ${retireAge}`}
+            icon={PiggyBank}
+            onClick={() => setActiveTab("inputs")}
+          />
+          <SummaryCard
+            title="First-year distribution"
+            value={firstYear ? fmtCurrency(firstYear.totalPortfolioDistribution) : "$0"}
+            subtitle="Cash withdrawals + Roth + RMD"
+            icon={DollarSign}
+            onClick={() => setActiveTab("details")}
+          />
+          <SummaryCard
+            title="Portfolio at 67"
+            value={age67Row ? fmtCurrency(age67Row.endPortfolio) : "—"}
+            subtitle="Tax-deferred balance after early years"
+            icon={TrendingUp}
+            onClick={() => setActiveTab("details")}
+          />
+          <SummaryCard
+            title="Roth at 67"
+            value={age67Row ? fmtCurrency(age67Row.endRoth) : "—"}
+            subtitle="Roth balance after early years"
+            icon={PiggyBank}
+            onClick={() => setActiveTab("details")}
+          />
+          <SummaryCard
+            title="Plan status"
+            value={healthLabel}
+            subtitle={finalYear ? `Ending net worth ${fmtCurrency(finalYear.netWorth)}` : ""}
+            icon={Home}
+            onClick={() => setActiveTab("projection")}
+          />
         </div>
 
         <Card className={`rounded-2xl shadow-sm ${selfChecksPassed ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"}`}>
@@ -1174,14 +1220,33 @@ export default function RetirementPlannerApp() {
           </CardContent>
         </Card>
 
-        <Tabs defaultValue="inputs" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3 rounded-2xl">
-            <TabsTrigger value="inputs">Inputs</TabsTrigger>
-            <TabsTrigger value="projection">Projection</TabsTrigger>
-            <TabsTrigger value="details">Year-by-year</TabsTrigger>
-          </TabsList>
+        <div className="space-y-4">
+          <div className="grid w-full grid-cols-3 rounded-2xl bg-white p-1 shadow-sm">
+            <button
+              type="button"
+              onClick={() => setActiveTab("inputs")}
+              className={`rounded-xl px-4 py-2 text-sm font-medium ${activeTab === "inputs" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Inputs
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("projection")}
+              className={`rounded-xl px-4 py-2 text-sm font-medium ${activeTab === "projection" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Projection
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("details")}
+              className={`rounded-xl px-4 py-2 text-sm font-medium ${activeTab === "details" ? "bg-slate-900 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+            >
+              Year-by-year
+            </button>
+          </div>
 
-          <TabsContent value="inputs" className="space-y-4">
+          {activeTab === "inputs" && (
+          <div className="space-y-4">
             <div className="grid gap-4 xl:grid-cols-3">
               <Card className="rounded-2xl shadow-sm xl:col-span-1">
                 <CardHeader>
@@ -1370,9 +1435,11 @@ export default function RetirementPlannerApp() {
                 </CardContent>
               </Card>
             </div>
-          </TabsContent>
+          </div>
+          )}
 
-          <TabsContent value="projection" className="space-y-4">
+          {activeTab === "projection" && (
+          <div className="space-y-4">
             {row62 ? (
               <Card className="rounded-2xl shadow-sm">
                 <CardHeader>
@@ -1610,9 +1677,11 @@ export default function RetirementPlannerApp() {
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
+          </div>
+          )}
 
-          <TabsContent value="details">
+          {activeTab === "details" && (
+          <div>
             <Card className="rounded-2xl shadow-sm w-full">
               <CardHeader className="flex flex-row items-center justify-between gap-4">
                 <CardTitle>Year-by-year cash flow and tax view</CardTitle>
@@ -1709,8 +1778,9 @@ export default function RetirementPlannerApp() {
                 </Table>
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
+          </div>
+          )}
+        </div>
       </div>
     </div>
   );
