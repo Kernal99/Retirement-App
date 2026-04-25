@@ -1238,7 +1238,7 @@ export default function RetirementPlannerApp() {
   return (
     <div className="min-h-screen bg-slate-50 p-3 pb-24 md:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
-        <style jsx global>{`
+        <style>{`
 
           .year-grid-shell {
             display: flex;
@@ -2122,12 +2122,12 @@ export default function RetirementPlannerApp() {
           </div>
           )}
         <div className="fixed inset-x-0 bottom-0 z-50 grid grid-cols-4 gap-1 border-t bg-white/95 p-2 shadow-lg backdrop-blur md:hidden">
-          {[
+          {([
             ["summary", "Summary"],
             ["inputs", "Inputs"],
             ["projection", "Projection"],
             ["details", "Years"],
-          ].map(([value, label]) => (
+          ] as const).map(([value, label]) => (
             <button
               key={value}
               type="button"
