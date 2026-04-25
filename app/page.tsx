@@ -1241,6 +1241,10 @@ export default function RetirementPlannerApp() {
         <style jsx global>{`
 
           .year-grid-shell {
+            display: flex;
+            height: 100%;
+            min-height: 0;
+            flex-direction: column;
             border: 1px solid rgb(226 232 240);
             border-radius: 0.75rem;
             overflow: hidden;
@@ -1248,6 +1252,7 @@ export default function RetirementPlannerApp() {
           }
 
           .year-grid-header-scroll {
+            flex: 0 0 auto;
             width: 100%;
             overflow: hidden;
             background: rgb(248 250 252);
@@ -1255,51 +1260,11 @@ export default function RetirementPlannerApp() {
           }
 
           .year-grid-body-scroll {
-            height: 68vh;
+            flex: 1 1 auto;
+            min-height: 0;
             width: 100%;
             overflow: auto;
             -webkit-overflow-scrolling: touch;
-          }
-
-          .year-grid {
-            width: max-content;
-            min-width: 100%;
-          }
-
-          .year-grid-row {
-            display: grid;
-            grid-template-columns: 76px repeat(27, minmax(132px, 1fr));
-          }
-
-          .year-grid-cell {
-            min-height: 42px;
-            border-right: 1px solid rgb(226 232 240);
-            border-bottom: 1px solid rgb(226 232 240);
-            padding: 0.65rem 0.75rem;
-            white-space: nowrap;
-            font-size: 0.875rem;
-            background: white;
-          }
-
-          .year-grid-header {
-            font-weight: 700;
-            color: rgb(51 65 85);
-            background: rgb(248 250 252);
-            border-bottom: 0;
-          }
-
-          .year-grid-age {
-            position: sticky;
-            left: 0;
-            z-index: 20;
-            font-weight: 700;
-            background: white;
-            box-shadow: 2px 0 4px rgb(15 23 42 / 0.08);
-          }
-
-          .year-grid-header.year-grid-age {
-            z-index: 30;
-            background: rgb(248 250 252);
           }
 
           @media print {
@@ -1930,7 +1895,7 @@ export default function RetirementPlannerApp() {
               <CardHeader>
                 <CardTitle>Portfolio, Roth, ESOP, and net worth over time</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="min-h-0 flex-1 overflow-hidden">
                 <div className="h-[420px] w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={chartData}>
@@ -2029,9 +1994,9 @@ export default function RetirementPlannerApp() {
           )}
 
           {activeTab === "details" && (
-          <div>
-            <Card className="rounded-2xl shadow-sm w-full">
-              <CardHeader className="flex flex-row items-center justify-between gap-4">
+          <div className="h-[calc(100vh-180px)] overflow-hidden">
+            <Card className="flex h-full w-full flex-col rounded-2xl shadow-sm">
+              <CardHeader className="shrink-0 flex flex-row items-center justify-between gap-4">
                 <CardTitle>Year-by-year cash flow and tax view</CardTitle>
                 <button
                   type="button"
