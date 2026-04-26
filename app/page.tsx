@@ -52,6 +52,7 @@ type AppState = {
 
   monthlySpendBefore67: number;
   monthlySpendAfter67: number;
+  monthlySpendAfter77: number;
   expenseInflationEnabled: boolean;
   expenseInflationRate: number;
 
@@ -217,6 +218,7 @@ const defaultState: AppState = {
 
   monthlySpendBefore67: 13000,
   monthlySpendAfter67: 9000,
+  monthlySpendAfter77: 8000,
   expenseInflationEnabled: true,
   expenseInflationRate: 2.5,
 
@@ -478,6 +480,7 @@ export default function RetirementPlannerApp() {
     postRetirementReturn,
     monthlySpendBefore67,
     monthlySpendAfter67,
+    monthlySpendAfter77,
     expenseInflationEnabled,
     expenseInflationRate,
     ssUserAge,
@@ -608,9 +611,19 @@ export default function RetirementPlannerApp() {
     for (let age = retireAge; age <= endAge; age += 1) {
       const yearOffset = age - retireAge;
 
-      const spendBase = age < 67 ? monthlySpendBefore67 * 12 : monthlySpendAfter67 * 12;
-      const spendInflationYears =
-        age < 67 ? yearOffset : Math.max(0, 67 - retireAge) + (age - 67);
+      let spendBase: number;
+      let spendInflationYears: number;
+
+      if (age < 67) {
+        spendBase = monthlySpendBefore67 * 12;
+        spendInflationYears = yearOffset;
+      } else if (age < 77) {
+        spendBase = monthlySpendAfter67 * 12;
+        spendInflationYears = Math.max(0, 67 - retireAge) + (age - 67);
+      } else {
+        spendBase = monthlySpendAfter77 * 12;
+        spendInflationYears = Math.max(0, 67 - retireAge) + (77 - 67) + (age - 77);
+      }
 
       const annualSpend = expenseInflationEnabled
         ? spendBase * Math.pow(1 + expenseInflationRate / 100, spendInflationYears)
@@ -942,15 +955,20 @@ export default function RetirementPlannerApp() {
       const currentConversion = row.rothConversion;
       const taxableIncomeWithoutConversion = Math.max(0, row.taxableIncome - currentConversion);
       const irmaaThreshold = getIRMAAThreshold(row.age, taxFilingStatus);
-      const roughMagiWithoutConversion = Math.max(0, row.taxableIncome + getInflatedDeduction(yearOffset) - currentConversion);
+      const roughMagiWithoutConversion = Math.max(
+        0,
+        row.taxableIncome + getInflatedDeduction(yearOffset) - currentConversion,
+      );
 
-      const roomTo12 = bracket12 && Number.isFinite(bracket12.limit)
-        ? Math.max(0, bracket12.limit - taxableIncomeWithoutConversion)
-        : 0;
+      const roomTo12 =
+        bracket12 && Number.isFinite(bracket12.limit)
+          ? Math.max(0, bracket12.limit - taxableIncomeWithoutConversion)
+          : 0;
 
-      const roomTo22 = bracket22 && Number.isFinite(bracket22.limit)
-        ? Math.max(0, bracket22.limit - taxableIncomeWithoutConversion)
-        : 0;
+      const roomTo22 =
+        bracket22 && Number.isFinite(bracket22.limit)
+          ? Math.max(0, bracket22.limit - taxableIncomeWithoutConversion)
+          : 0;
 
       const roomBeforeIRMAA = Number.isFinite(irmaaThreshold)
         ? Math.max(0, irmaaThreshold - roughMagiWithoutConversion)
@@ -970,7 +988,11 @@ export default function RetirementPlannerApp() {
         targetBracket = "RMD years: low-bracket room only";
       }
 
-      recommendedConversion = clampNumber(recommendedConversion, 0, Math.max(0, row.endPortfolio + row.rothConversion));
+      recommendedConversion = clampNumber(
+        recommendedConversion,
+        0,
+        Math.max(0, row.endPortfolio + row.rothConversion),
+      );
 
       const irmaaSafe = row.irmaa === 0 && recommendedConversion <= roomBeforeIRMAA;
       const rothBeingUsed = row.rothCashWithdrawal > 0;
@@ -1316,6 +1338,7 @@ export default function RetirementPlannerApp() {
                 <CardContent className="grid gap-4">
                   <NumberField label="Monthly spending until 67" value={monthlySpendBefore67} onChange={(v) => update("monthlySpendBefore67", v)} />
                   <NumberField label="Monthly spending after 67" value={monthlySpendAfter67} onChange={(v) => update("monthlySpendAfter67", v)} />
+                  <NumberField label="Monthly spending after 77" value={monthlySpendAfter77} onChange={(v) => update("monthlySpendAfter77", v)} />
                   <div className="flex items-center justify-between rounded-2xl border p-3">
                     <div>
                       <Label>Inflate spending each year</Label>
