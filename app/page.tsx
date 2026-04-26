@@ -52,7 +52,6 @@ type AppState = {
 
   monthlySpendBefore67: number;
   monthlySpendAfter67: number;
-  monthlySpendAfter77: number;
   expenseInflationEnabled: boolean;
   expenseInflationRate: number;
 
@@ -151,6 +150,16 @@ type ScenarioSummary = {
   endingNetWorth: number;
 };
 
+type OptimizerRow = {
+  age: number;
+  recommendedConversion: number;
+  targetBracket: string;
+  irmaaSafe: boolean;
+  withdrawalMix: string;
+  recommendedStrategy: string;
+  reason: string;
+};
+
 type NumberFieldProps = {
   label: string;
   value: number;
@@ -208,7 +217,6 @@ const defaultState: AppState = {
 
   monthlySpendBefore67: 13000,
   monthlySpendAfter67: 9000,
-  monthlySpendAfter77: 8000,
   expenseInflationEnabled: true,
   expenseInflationRate: 2.5,
 
@@ -360,6 +368,16 @@ function calcIRMAA(age: number, filingStatus: FilingStatus, magi: number) {
   return monthlySurcharges[tier] * 12 * 2;
 }
 
+
+function getIRMAAThreshold(age: number, filingStatus: FilingStatus) {
+  if (age < 65) return Number.POSITIVE_INFINITY;
+  return filingStatus === "single" ? 106000 : 212000;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function randomNormal(mean: number, stdDev: number) {
   let u = 0;
   let v = 0;
@@ -460,7 +478,6 @@ export default function RetirementPlannerApp() {
     postRetirementReturn,
     monthlySpendBefore67,
     monthlySpendAfter67,
-    monthlySpendAfter77,
     expenseInflationEnabled,
     expenseInflationRate,
     ssUserAge,
@@ -591,19 +608,9 @@ export default function RetirementPlannerApp() {
     for (let age = retireAge; age <= endAge; age += 1) {
       const yearOffset = age - retireAge;
 
-      let spendBase: number;
-      let spendInflationYears: number;
-
-      if (age < 67) {
-        spendBase = monthlySpendBefore67 * 12;
-        spendInflationYears = yearOffset;
-      } else if (age < 77) {
-        spendBase = monthlySpendAfter67 * 12;
-        spendInflationYears = Math.max(0, 67 - retireAge) + (age - 67);
-      } else {
-        spendBase = monthlySpendAfter77 * 12;
-        spendInflationYears = Math.max(0, 67 - retireAge) + (77 - 67) + (age - 77);
-      }
+      const spendBase = age < 67 ? monthlySpendBefore67 * 12 : monthlySpendAfter67 * 12;
+      const spendInflationYears =
+        age < 67 ? yearOffset : Math.max(0, 67 - retireAge) + (age - 67);
 
       const annualSpend = expenseInflationEnabled
         ? spendBase * Math.pow(1 + expenseInflationRate / 100, spendInflationYears)
@@ -925,6 +932,93 @@ export default function RetirementPlannerApp() {
     });
   }, [results, bestCaseReturn, baseCaseReturn, worstCaseReturn]);
 
+  const optimizerRows = useMemo<OptimizerRow[]>(() => {
+    return results.map((row) => {
+      const yearOffset = row.age - retireAge;
+      const inflatedBrackets = getInflatedBrackets(yearOffset);
+      const bracket12 = inflatedBrackets.find((bracket) => bracket.rate === 0.12);
+      const bracket22 = inflatedBrackets.find((bracket) => bracket.rate === 0.22);
+
+      const currentConversion = row.rothConversion;
+      const taxableIncomeWithoutConversion = Math.max(0, row.taxableIncome - currentConversion);
+      const irmaaThreshold = getIRMAAThreshold(row.age, taxFilingStatus);
+      const roughMagiWithoutConversion = Math.max(0, row.taxableIncome + getInflatedDeduction(yearOffset) - currentConversion);
+
+      const roomTo12 = bracket12 && Number.isFinite(bracket12.limit)
+        ? Math.max(0, bracket12.limit - taxableIncomeWithoutConversion)
+        : 0;
+
+      const roomTo22 = bracket22 && Number.isFinite(bracket22.limit)
+        ? Math.max(0, bracket22.limit - taxableIncomeWithoutConversion)
+        : 0;
+
+      const roomBeforeIRMAA = Number.isFinite(irmaaThreshold)
+        ? Math.max(0, irmaaThreshold - roughMagiWithoutConversion)
+        : Number.POSITIVE_INFINITY;
+
+      let recommendedConversion = 0;
+      let targetBracket = "Avoid conversion";
+
+      if (row.age < 67) {
+        recommendedConversion = Math.min(roomTo22, roomBeforeIRMAA);
+        targetBracket = "Fill 22% bracket";
+      } else if (row.age < 73) {
+        recommendedConversion = Math.min(roomTo12 || roomTo22, roomBeforeIRMAA);
+        targetBracket = row.age >= 65 ? "IRMAA-safe 12%/22%" : "Fill 12% or low 22%";
+      } else {
+        recommendedConversion = Math.min(roomTo12, roomBeforeIRMAA);
+        targetBracket = "RMD years: low-bracket room only";
+      }
+
+      recommendedConversion = clampNumber(recommendedConversion, 0, Math.max(0, row.endPortfolio + row.rothConversion));
+
+      const irmaaSafe = row.irmaa === 0 && recommendedConversion <= roomBeforeIRMAA;
+      const rothBeingUsed = row.rothCashWithdrawal > 0;
+      const portfolioLow = row.endPortfolio <= 0;
+      const rmdActive = row.rmd > 0;
+
+      let withdrawalMix = "Use ESOP/taxable assets first; preserve Roth";
+      let recommendedStrategy = "Balanced tax smoothing";
+      let reason = "Use taxable income capacity without forcing unnecessary Roth withdrawals.";
+
+      if (portfolioLow && row.endRoth > 0) {
+        withdrawalMix = "Roth is funding spending because taxable portfolio is depleted";
+        recommendedStrategy = "Reduce conversions / preserve taxable portfolio";
+        reason = "Taxable assets are depleted before late retirement, which can make the plan too Roth-dependent.";
+      } else if (row.age < 67) {
+        withdrawalMix = "Use ESOP + controlled portfolio withdrawals; convert to Roth";
+        recommendedStrategy = "Golden-window Roth conversions";
+        reason = "Early years usually have lower brackets before pension, Medicare, and RMD pressure.";
+      } else if (row.age >= 65 && row.irmaa > 0) {
+        withdrawalMix = "Reduce conversion/ESOP stacking; avoid IRMAA cliff";
+        recommendedStrategy = "IRMAA-safe income cap";
+        reason = "Medicare surcharges are already triggered in this year.";
+      } else if (rmdActive) {
+        withdrawalMix = "Spend RMD first, then taxable/ESOP, Roth last";
+        recommendedStrategy = "RMD-first Roth preservation";
+        reason = "RMD is mandatory and taxable, so use it before adding optional taxable income.";
+      } else if (rothBeingUsed && row.age < 73) {
+        withdrawalMix = "Avoid Roth use if taxable assets remain";
+        recommendedStrategy = "Preserve Roth for later";
+        reason = "Early Roth withdrawals reduce tax-free compounding and legacy value.";
+      }
+
+      return {
+        age: row.age,
+        recommendedConversion,
+        targetBracket,
+        irmaaSafe,
+        withdrawalMix,
+        recommendedStrategy,
+        reason,
+      };
+    });
+  }, [results, retireAge, taxFilingStatus, federalBrackets, inflationRate]);
+
+  const optimizerCurrentYear = optimizerRows.find((row) => row.age === retireAge) || optimizerRows[0] || null;
+  const optimizerBadge = optimizerCurrentYear?.recommendedStrategy || "Balanced tax smoothing";
+  const totalRecommendedConversions = optimizerRows.reduce((sum, row) => sum + row.recommendedConversion, 0);
+
   const monteCarloSummary = useMemo(() => {
     const runs = Math.max(50, Math.floor(monteCarloRuns));
     let successes = 0;
@@ -1222,7 +1316,6 @@ export default function RetirementPlannerApp() {
                 <CardContent className="grid gap-4">
                   <NumberField label="Monthly spending until 67" value={monthlySpendBefore67} onChange={(v) => update("monthlySpendBefore67", v)} />
                   <NumberField label="Monthly spending after 67" value={monthlySpendAfter67} onChange={(v) => update("monthlySpendAfter67", v)} />
-                  <NumberField label="Monthly spending after 77" value={monthlySpendAfter77} onChange={(v) => update("monthlySpendAfter77", v)} />
                   <div className="flex items-center justify-between rounded-2xl border p-3">
                     <div>
                       <Label>Inflate spending each year</Label>
@@ -1373,6 +1466,70 @@ export default function RetirementPlannerApp() {
           </TabsContent>
 
           <TabsContent value="projection" className="space-y-4">
+
+            <Card className="rounded-2xl shadow-sm border-emerald-200 bg-emerald-50">
+              <CardHeader>
+                <CardTitle>Withdrawal and Roth conversion optimizer</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 xl:grid-cols-4">
+                <div className="rounded-xl border bg-white p-4">
+                  <p className="text-sm text-slate-500">Recommended strategy badge</p>
+                  <p className="mt-1 text-lg font-semibold">{optimizerBadge}</p>
+                </div>
+                <div className="rounded-xl border bg-white p-4">
+                  <p className="text-sm text-slate-500">Current-year Roth conversion target</p>
+                  <p className="mt-1 text-2xl font-semibold">{fmtCurrency(optimizerCurrentYear?.recommendedConversion ?? 0)}</p>
+                  <p className="mt-1 text-xs text-slate-500">{optimizerCurrentYear?.targetBracket}</p>
+                </div>
+                <div className="rounded-xl border bg-white p-4">
+                  <p className="text-sm text-slate-500">IRMAA status</p>
+                  <p className="mt-1 text-lg font-semibold">{optimizerCurrentYear?.irmaaSafe ? "IRMAA-safe" : "IRMAA caution"}</p>
+                </div>
+                <div className="rounded-xl border bg-white p-4">
+                  <p className="text-sm text-slate-500">Total suggested conversions</p>
+                  <p className="mt-1 text-2xl font-semibold">{fmtCurrency(totalRecommendedConversions)}</p>
+                </div>
+                <div className="xl:col-span-4 rounded-xl border bg-white p-4">
+                  <p className="text-sm text-slate-500">Recommended withdrawal mix</p>
+                  <p className="mt-1 font-medium">{optimizerCurrentYear?.withdrawalMix}</p>
+                  <p className="mt-1 text-sm text-slate-500">{optimizerCurrentYear?.reason}</p>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-2xl shadow-sm">
+              <CardHeader>
+                <CardTitle>Optimizer by year</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-[420px] overflow-auto">
+                <Table className="min-w-[1100px] text-sm">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Age</TableHead>
+                      <TableHead>Recommended conversion</TableHead>
+                      <TableHead>Target</TableHead>
+                      <TableHead>IRMAA safe</TableHead>
+                      <TableHead>Withdrawal mix</TableHead>
+                      <TableHead>Strategy</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {optimizerRows.map((row) => (
+                      <TableRow key={row.age}>
+                        <TableCell className="font-medium">{row.age}</TableCell>
+                        <TableCell>{fmtCurrency(row.recommendedConversion)}</TableCell>
+                        <TableCell>{row.targetBracket}</TableCell>
+                        <TableCell>{row.irmaaSafe ? "Yes" : "Caution"}</TableCell>
+                        <TableCell>{row.withdrawalMix}</TableCell>
+                        <TableCell>{row.recommendedStrategy}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+
+
             {row62 ? (
               <Card className="rounded-2xl shadow-sm">
                 <CardHeader>
